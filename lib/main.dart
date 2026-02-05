@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:intl/intl.dart'; 
 import 'esp32_service.dart';
 
 void main() => runApp(const WheelProApp());
@@ -10,9 +11,22 @@ class WheelProApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF121417),
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.cyanAccent, brightness: Brightness.dark),
+      // ACCESSIBILITY: High-contrast Light Theme for outdoor visibility
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: Colors.white,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.light,
+          primary: Colors.blue.shade900,
+        ),
+        // ACCESSIBILITY: Larger default text for easier reading
+        textTheme: const TextTheme(
+          bodyLarge: TextStyle(fontSize: 18, color: Colors.black),
+          bodyMedium: TextStyle(fontSize: 16, color: Colors.black87),
+          headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black),
+        ),
       ),
       home: const MainNavigation(),
     );
@@ -28,14 +42,12 @@ class MainNavigation extends StatefulWidget {
 class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
   final List<SessionResult> _history = [];
-  
-  // Settings State
   int _testDuration = 10;
   bool _forceMock = false;
 
   @override
   Widget build(BuildContext context) {
-    final List<Widget> _screens = [
+    final List<Widget> screens = [
       ProDashboard(
         duration: _testDuration,
         forceMock: _forceMock,
@@ -51,23 +63,25 @@ class _MainNavigationState extends State<MainNavigation> {
     ];
 
     return Scaffold(
-      body: _screens[_currentIndex],
+      body: screens[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
-        selectedItemColor: Colors.cyanAccent,
-        backgroundColor: const Color(0xFF1E2127),
+        selectedItemColor: Colors.blue.shade900,
+        unselectedItemColor: Colors.grey.shade600,
+        backgroundColor: Colors.grey.shade100,
         type: BottomNavigationBarType.fixed,
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.bolt), label: "Test"),
-          BottomNavigationBarItem(icon: Icon(Icons.analytics), label: "History"),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: "Settings"),
+          BottomNavigationBarItem(icon: Icon(Icons.bolt, size: 28), label: "Test"),
+          BottomNavigationBarItem(icon: Icon(Icons.history, size: 28), label: "History"),
+          BottomNavigationBarItem(icon: Icon(Icons.settings, size: 28), label: "Settings"),
         ],
       ),
     );
   }
 }
 
+// --- TAB 1: DASHBOARD ---
 class ProDashboard extends StatefulWidget {
   final int duration;
   final bool forceMock;
@@ -88,8 +102,22 @@ class _ProDashboardState extends State<ProDashboard> {
   List<WheelData> sessionData = [];
 
   final List<Maneuver> maneuvers = [
-    Maneuver(name: "Straight Line", instructions: "Drive straight for the duration."),
-    Maneuver(name: "360° Pivot", instructions: "Spin on the spot.", isPivot: true),
+    Maneuver(
+      name: "Straight Line", 
+      steps: [
+        ManeuverStep(text: "Lean slightly forward for stability.", imagePath: "assets/images/wheeling_forward.png"),
+        ManeuverStep(text: "Use long, smooth strokes on the handrims."),
+        ManeuverStep(text: "Look 5 meters ahead to stay straight."),
+      ]
+    ),
+    Maneuver(
+      name: "360° Pivot", 
+      isPivot: true,
+      steps: [
+        ManeuverStep(text: "Pull one handrim back while pushing the other forward.", imagePath: "assets/images/wheeling_on_spot.png"),
+        ManeuverStep(text: "Keep the wheelchair within its own length."),
+      ]
+    ),
   ];
 
   @override
@@ -115,16 +143,15 @@ class _ProDashboardState extends State<ProDashboard> {
     double scoreValue = 0;
     if (sessionData.isNotEmpty) {
       if (selectedManeuver!.isPivot) {
-        double mirrorError = sessionData.map((d) => (d.rpmL - d.rpmR).abs()).reduce((a, b) => a + b) / sessionData.length;
-        scoreValue = (100 - (mirrorError * 4)).clamp(0, 100);
+        double symmetry = sessionData.map((d) => (d.rpmL - d.rpmR).abs()).reduce((a, b) => a + b) / sessionData.length;
+        scoreValue = (100 - (symmetry * 4)).clamp(0, 100);
       } else {
         double drift = sessionData.map((d) => d.rpmDiff).reduce((a, b) => a + b) / sessionData.length;
         scoreValue = (100 - (drift * 6)).clamp(0, 100);
       }
     }
-    int finalScore = scoreValue.toInt();
-    widget.onResult(SessionResult(selectedManeuver!.name, finalScore, DateTime.now()));
-    setState(() { isTesting = false; timerLeft = 0; lastScore = finalScore; });
+    widget.onResult(SessionResult(selectedManeuver!.name, scoreValue.toInt(), DateTime.now()));
+    setState(() { isTesting = false; timerLeft = 0; lastScore = scoreValue.toInt(); });
   }
 
   @override
@@ -132,27 +159,22 @@ class _ProDashboardState extends State<ProDashboard> {
     return StreamBuilder<WheelData>(
       stream: esp.stream,
       builder: (context, snapshot) {
-        // Use logic from widget settings
         final d = (widget.forceMock) ? WheelData.mock(moving: isTesting) : (snapshot.data ?? WheelData.mock());
         if (isTesting) sessionData.add(d);
 
-        return Padding(
-          padding: const EdgeInsets.all(20),
+        return SafeArea(
           child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (countdown > 0) ...[
-                  const Text("GET READY", style: TextStyle(letterSpacing: 4, color: Colors.grey)),
-                  Text("$countdown", style: const TextStyle(fontSize: 140, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
-                ] else if (isTesting) ...[
-                  _buildActiveTestView(d),
-                ] else if (lastScore != null) ...[
-                  _buildResultView(),
-                ] else ...[
-                  _buildManeuverSelection(),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (countdown > 0) _buildCountdown()
+                  else if (isTesting) _buildActiveTest(d)
+                  else if (lastScore != null) _buildResultView()
+                  else _buildSelectionView(),
                 ],
-              ],
+              ),
             ),
           ),
         );
@@ -160,62 +182,90 @@ class _ProDashboardState extends State<ProDashboard> {
     );
   }
 
-  Widget _buildActiveTestView(WheelData d) {
-    return Column(
-      children: [
-        Text("${timerLeft}s", style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
-        const SizedBox(height: 20),
-        GridView.count(
-          shrinkWrap: true,
-          crossAxisCount: 2,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          childAspectRatio: 1.4,
-          children: [
-            _liveMetricTile("Right RPM", d.rpmR.toStringAsFixed(2)),
-            _liveMetricTile("Left RPM", d.rpmL.toStringAsFixed(2)),
-            _liveMetricTile("Speed m/s", d.speedMS.toStringAsFixed(2)),
-            _liveMetricTile("Diff", d.rpmDiff.toStringAsFixed(2)),
-          ],
-        ),
-      ],
-    );
-  }
+  Widget _buildCountdown() => Text("$countdown", style: TextStyle(fontSize: 160, fontWeight: FontWeight.bold, color: Colors.blue.shade900));
 
-  Widget _liveMetricTile(String label, String value) => Container(
-    decoration: BoxDecoration(color: const Color(0xFF1E2127), borderRadius: BorderRadius.circular(15)),
+  Widget _buildActiveTest(WheelData d) => Column(
+    children: [
+      Text("${timerLeft}s", style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 30),
+      GridView.count(
+        shrinkWrap: true, crossAxisCount: 2, crossAxisSpacing: 15, mainAxisSpacing: 15, childAspectRatio: 1.2,
+        children: [
+          _tile("Left RPM", d.rpmL.toStringAsFixed(1)), _tile("Right RPM", d.rpmR.toStringAsFixed(1)),
+          _tile("Speed m/s", d.speedMS.toStringAsFixed(2)), _tile("Difference", d.rpmDiff.toStringAsFixed(1)),
+        ],
+      ),
+    ],
+  );
+
+  Widget _tile(String l, String v) => Container(
+    decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.blue.shade100)),
     child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-      Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+      Text(l, style: const TextStyle(fontSize: 14, color: Colors.black54)),
+      Text(v, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
     ]),
   );
 
   Widget _buildResultView() => Column(
     children: [
-      const Text("RESULT", style: TextStyle(letterSpacing: 4, color: Colors.grey)),
-      Text("$lastScore%", style: const TextStyle(fontSize: 120, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
+      const Text("SCORE", style: TextStyle(fontSize: 20, letterSpacing: 2)),
+      Text("$lastScore%", style: TextStyle(fontSize: 140, fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
       const SizedBox(height: 40),
-      ElevatedButton(onPressed: () => setState(() => lastScore = null), child: const Text("TRY AGAIN")),
+      SizedBox(
+        width: 200, height: 60,
+        child: ElevatedButton(onPressed: () => setState(() => lastScore = null), child: const Text("FINISH", style: TextStyle(fontSize: 18))),
+      ),
     ],
   );
 
-  Widget _buildManeuverSelection() => Column(
+  Widget _buildSelectionView() => Column(
     children: [
-      const Text("SELECT MANEUVER", style: TextStyle(letterSpacing: 2, color: Colors.grey)),
+      const Text("SELECT TRIAL", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
       const SizedBox(height: 20),
-      ...maneuvers.map((m) => ListTile(
-        title: Text(m.name, textAlign: TextAlign.center),
-        onTap: () => setState(() => selectedManeuver = m),
-        tileColor: selectedManeuver == m ? Colors.cyanAccent.withOpacity(0.1) : null,
+      ...maneuvers.map((m) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: ListTile(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          tileColor: selectedManeuver == m ? Colors.blue.shade100 : Colors.grey.shade100,
+          title: Text(m.name, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+          onTap: () => setState(() => selectedManeuver = m),
+        ),
       )),
-      if (selectedManeuver != null) ...[
-        const SizedBox(height: 20),
-        Text(selectedManeuver!.instructions, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
-        const SizedBox(height: 20),
-        ElevatedButton(onPressed: startSequence, child: const Text("START")),
-      ]
+      if (selectedManeuver != null) _buildInstructions(),
     ],
   );
+
+  Widget _buildInstructions() {
+    final primaryStep = selectedManeuver!.steps.firstWhere((s) => s.imagePath != null, orElse: () => selectedManeuver!.steps.first);
+
+    return Container(
+      margin: const EdgeInsets.only(top: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey.shade300)),
+      child: Column(
+        children: [
+          if (primaryStep.imagePath != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Image.asset(primaryStep.imagePath!, fit: BoxFit.contain),
+              ),
+            ),
+          Text(selectedManeuver!.steps.map((s) => "• ${s.text}").join("\n\n"), style: const TextStyle(fontSize: 16, height: 1.4)),
+          const SizedBox(height: 30),
+          SizedBox(
+            width: double.infinity, height: 60,
+            child: ElevatedButton(
+              onPressed: startSequence, 
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade900, foregroundColor: Colors.white),
+              child: const Text("START TRIAL", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // --- TAB 2: HISTORY ---
@@ -225,14 +275,20 @@ class ProgressScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("History")),
-      body: history.isEmpty ? const Center(child: Text("No data.")) : ListView.builder(
-        itemCount: history.length,
-        itemBuilder: (context, index) => ListTile(
-          title: Text(history[index].name),
-          trailing: Text("${history[index].score}%"),
-        ),
-      ),
+      appBar: AppBar(title: const Text("Performance History"), backgroundColor: Colors.white, elevation: 0),
+      body: history.isEmpty 
+        ? const Center(child: Text("No trials recorded yet.")) 
+        : ListView.builder(
+            itemCount: history.length,
+            itemBuilder: (context, index) {
+              final res = history[index];
+              return ListTile(
+                leading: CircleAvatar(backgroundColor: Colors.blue.shade900, child: Text("${res.score}", style: const TextStyle(color: Colors.white))),
+                title: Text(res.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(DateFormat('MMM d, yyyy • HH:mm').format(res.date)),
+              );
+            },
+          ),
     );
   }
 }
@@ -243,7 +299,6 @@ class SettingsScreen extends StatelessWidget {
   final bool forceMock;
   final Function(int) onDurationChanged;
   final Function(bool) onMockChanged;
-
   const SettingsScreen({super.key, required this.duration, required this.forceMock, required this.onDurationChanged, required this.onMockChanged});
 
   @override
@@ -251,27 +306,17 @@ class SettingsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text("Settings")),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(24),
         children: [
-          const Text("Test Configuration", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-          ListTile(
-            title: const Text("Maneuver Duration"),
-            subtitle: Text("$duration seconds"),
-            trailing: SizedBox(
-              width: 150,
-              child: Slider(
-                value: duration.toDouble(),
-                min: 5, max: 30, divisions: 5,
-                onChanged: (v) => onDurationChanged(v.toInt()),
-              ),
-            ),
-          ),
-          const Divider(),
+          const Text("Test Configuration", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 20),
+          Text("Sensing Duration: $duration seconds"),
+          Slider(value: duration.toDouble(), min: 5, max: 20, divisions: 3, onChanged: (v) => onDurationChanged(v.toInt())),
+          const Divider(height: 40),
           SwitchListTile(
-            title: const Text("Force Demo Mode"),
-            subtitle: const Text("Uses mock data instead of ESP32"),
-            value: forceMock,
-            onChanged: onMockChanged,
+            title: const Text("Demo Mode"),
+            subtitle: const Text("Simulate movement without ESP32 connection"),
+            value: forceMock, onChanged: onMockChanged,
           ),
         ],
       ),

@@ -3,12 +3,18 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 
+class ManeuverStep {
+  final String text;
+  final String? imagePath; // Path to your local asset image
+  ManeuverStep({required this.text, this.imagePath});
+}
+
 class Maneuver {
   final String name;
-  final String instructions;
+  final List<ManeuverStep> steps; // Grouped steps from the guide
   final bool isPivot;
 
-  Maneuver({required this.name, required this.instructions, this.isPivot = false});
+  Maneuver({required this.name, required this.steps, this.isPivot = false});
 }
 
 class SessionResult {
